@@ -50,11 +50,20 @@ struct KaraokeLineView: View {
             }
         }
         if !current.isEmpty { result.append(current) }
-        return result
+        // KaraokeFlowLayoutImpl places subviews in literal array order,
+        // left-to-right, regardless of the environment's layoutDirection —
+        // unlike a built-in HStack, a custom Layout conformance doesn't
+        // auto-reverse subview order for RTL on its own (that's on the
+        // conforming type to handle). Reversing the array here, so the
+        // first-sung word ends up last in display order, is what actually
+        // makes it render rightmost for RTL lines — array[0] still gets
+        // placed leftmost by the layout's own placement math, so reversing
+        // the source order is what needs to change, not that math.
+        return line.isRTL ? result.reversed() : result
     }
 
     var body: some View {
-        KaraokeFlowLayout(spacing: 8) {
+        KaraokeFlowLayout(spacing: 8, alignment: SwiftUI.HorizontalAlignment(karaokeTextAlignment: UserDefaults.karaokeOptions.textAlignment)) {
             ForEach(Array(words.enumerated()), id: \.offset) { _, word in
                 KaraokeWordView(syllables: word, currentMs: currentMs, isActiveLine: isActiveLine)
             }
@@ -68,6 +77,31 @@ struct KaraokeLineView: View {
         .blur(radius: isActiveLine ? 0 : 1.5)
         .scaleEffect(isActiveLine ? 1.0 : 0.97, anchor: .center)
         .animation(.easeOut(duration: 0.35), value: isActiveLine)
+        // Setting layoutDirection explicitly per-line (rather than relying
+        // on the app's own environment, which follows the app's UI
+        // language, not each individual song's) is what makes the syllable
+        // fill gradient below sweep the correct way for RTL lyrics like
+        // Arabic or Hebrew. UnitPoint.leading/.trailing (used for the fill
+        // gradient's start/end in KaraokeSyllableTextView) are layout-
+        // direction-relative, not literally left/right — they only flip
+        // for RTL when the environment says so, which previously never
+        // happened for an Arabic *song* played in an app whose own
+        // language was English, so the fill always swept left-to-right
+        // regardless of the lyrics' actual script. This also makes
+        // KaraokeFlowLayout's word ordering flip correctly, so the words
+        // read in natural RTL order rather than the syllable array's raw
+        // left-to-right storage order.
+        .environment(\.layoutDirection, line.isRTL ? .rightToLeft : .leftToRight)
+    }
+}
+
+private extension SwiftUI.HorizontalAlignment {
+    init(karaokeTextAlignment: KaraokeTextAlignment) {
+        switch karaokeTextAlignment {
+        case .leading: self = .leading
+        case .center: self = .center
+        case .trailing: self = .trailing
+        }
     }
 }
 

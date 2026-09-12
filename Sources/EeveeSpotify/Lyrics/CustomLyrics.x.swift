@@ -414,7 +414,46 @@ func getLyricsDataForCurrentTrack(_ originalPath: String, originalLyrics: Lyrics
         return prefetched.data
     }
 
-    var lyrics = try loadCustomLyricsForTrackId(trackIdentifier)
+    // Bounded wait around the synchronous fallback fetch, specifically
+    // because a track stuck "queued" (503) on SpicyLyrics has a retry loop
+    // (performQuery) that can legitimately run for up to ~26s — and this
+    // function runs on whatever thread Spotify itself calls it from, not a
+    // background one. Without a bound, skipping through several
+    // back-to-back queued tracks could each block that thread for a long
+    // stretch, one after another. This is the leading theory for lyrics
+    // "breaking" after rapid skipping and needing an app restart to
+    // recover — a real, reachable blocking path — though I don't have a
+    // direct log capture of that exact failure to confirm the mechanism
+    // beyond this.
+    //
+    // The underlying fetch keeps running in the background past the
+    // timeout — its result still reaches KaraokeLyricsStore (and, via
+    // whatever the next prefetch/fetch for the same track does,
+    // prefetchedResult) through loadCustomLyricsForTrackId itself; only
+    // THIS caller stops waiting on it. A slow fetch isn't wasted, it's just
+    // no longer something Spotify's own thread sits through.
+    let fallbackTimeout: TimeInterval = 4.0
+    let semaphore = DispatchSemaphore(value: 0)
+    var fetchedLyrics: Lyrics?
+    var fetchedError: Error?
+    DispatchQueue.global(qos: .userInitiated).async {
+        do {
+            fetchedLyrics = try loadCustomLyricsForTrackId(trackIdentifier)
+        } catch {
+            fetchedError = error
+        }
+        semaphore.signal()
+    }
+    guard semaphore.wait(timeout: .now() + fallbackTimeout) == .success else {
+        writeDebugLog("[Lyrics] synchronous fetch for \(trackIdentifier) exceeded \(fallbackTimeout)s — falling through without waiting further")
+        throw LyricsError.noSuchSong
+    }
+    if let fetchedError = fetchedError {
+        throw fetchedError
+    }
+    guard var lyrics = fetchedLyrics else {
+        throw LyricsError.noSuchSong
+    }
     
     let lyricsColorsSettings = UserDefaults.lyricsColors
     
