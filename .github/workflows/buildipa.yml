@@ -1,4 +1,4 @@
-name: Build IPA
+name: Build IPA (NO PATCH)
 
 on:
   workflow_dispatch:
@@ -13,11 +13,6 @@ on:
         default: ""
         required: false
         type: string
-      patch_ipa:
-        description: "Patch the built IPA with zxPluginsInject (ipapatch)"
-        default: false
-        required: false
-        type: boolean
       upload_method:
         description: "Where to upload the built IPA"
         default: "artifacts"
@@ -105,11 +100,11 @@ jobs:
             exit 1
           fi
 
-      - name: Build zxPluginsInject.dylib
-        if: ${{ inputs.ipa_url != '' && inputs.patch_ipa == true }}
-        run: |
-          chmod +x Tools/build-zxpi.sh
-          Tools/build-zxpi.sh
+      #- name: Build zxPluginsInject.dylib
+       # if: ${{ inputs.ipa_url != '' }}
+        #run: |
+         # chmod +x Tools/build-zxpi.sh
+          # Tools/build-zxpi.sh
 
       - name: Fetch OpenSpotifySafariExtension.appex
         if: ${{ inputs.ipa_url != '' }}
@@ -149,12 +144,6 @@ jobs:
                -f "${INJECT[@]}" -c 9 -m 15.0 -du
           echo "OUT_IPA=$OUT" >> $GITHUB_ENV
 
-      - name: LC-inject zxPluginsInject (ipapatch)
-        if: ${{ inputs.ipa_url != '' && inputs.patch_ipa == true }}
-        run: |
-          ipapatch --input "$OUT_IPA" --inplace --noconfirm \
-                   --dylib packages/zxPluginsInject.dylib
-
       - name: Strip incompatible bundles
         if: ${{ inputs.ipa_url != '' }}
         run: |
@@ -175,6 +164,9 @@ jobs:
           zip -qry "$(basename "$OUT_IPA")" Payload
           rm -rf Payload
 
+      # NOTE: Removed the post-injection ipapatch step.
+      # If you later need it back, restore the "LC-inject zxPluginsInject (ipapatch)" step.
+      
       - name: Strip Watch app (if any survived)
         if: ${{ inputs.ipa_url != '' }}
         run: |
