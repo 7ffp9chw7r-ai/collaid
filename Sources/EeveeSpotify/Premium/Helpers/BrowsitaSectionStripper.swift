@@ -9,6 +9,12 @@ enum BrowsitaSectionStripper {
         "sponsored", "marquee", "promoted", "home-ads", "adsproduct",
         "leavebehind", "leave-behind", "premium-upsell", "premium_upsell",
         "premiumupsell", "referralsupsellcard",
+        // Spotify's ad-event-tracking host (build-4 probe of a real 9.1.84
+        // scrollsita ad section: ~20 tracking URLs per event, viewability/
+        // clicked/quartiles). Legit sections never carry ad tracking URLs,
+        // and the "Advertisement" label itself is rendered client-side, so
+        // this host is the only reliable wire marker for those payloads.
+        "aet.spotify.com",
     ].map { Array($0.utf8) }
 
     // Generic "upsell" metadata is not enough to delete a whole section. It
