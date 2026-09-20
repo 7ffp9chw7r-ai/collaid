@@ -166,9 +166,9 @@ func activateClientMessagingPlatformBlocker() {
     let total = containerHooks.count + viewHooks.count
 
     for (className, label, activate) in containerHooks {
-        guard let cls = NSClassFromString(className),
+        guard let cls = findTweakClass(className),
               class_getInstanceMethod(cls, viewWillAppearSelector) != nil else {
-            NSLog("[EeveeSpotify][CMPBlock] %@ unavailable; skipping", label)
+            cmpLog("\(label) unavailable; skipping (class not registered / no viewWillAppear)")
             continue
         }
         activate()
@@ -181,9 +181,9 @@ func activateClientMessagingPlatformBlocker() {
         // compatible on all builds (Orion rejects them with
         // targetHasIncompatibleType). Their hooks are declared against
         // NSObject and cast internally instead.
-        guard let cls = NSClassFromString(className),
+        guard let cls = findTweakClass(className),
               class_getInstanceMethod(cls, didMoveToSuperviewSelector) != nil else {
-            NSLog("[EeveeSpotify][CMPBlock] %@ unavailable; skipping", label)
+            cmpLog("\(label) unavailable; skipping (class not registered / no didMoveToSuperview)")
             continue
         }
         activate()

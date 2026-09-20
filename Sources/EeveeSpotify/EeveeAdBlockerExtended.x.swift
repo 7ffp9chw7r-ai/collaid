@@ -6,6 +6,7 @@
 import Orion
 import Foundation
 import UIKit
+import ObjectiveC.runtime
 
 // Every service has its own group. Spotify rolls these modules out
 // independently, so one missing/renamed class must not disable the rest of the
@@ -43,6 +44,21 @@ private func adlog(_ what: String) {
 // reached the tester log and hid whether hooks actually attached.
 private func ablog(_ message: String) {
     writeDebugLog("[AdBlock] \(message)")
+}
+
+// Swift classes register in the ObjC runtime lazily, so NSClassFromString at
+// tweak-init time can miss classes that exist (build-3 tester log: every
+// scroll-feed service kill skipped as "unavailable" while the ad rendered).
+// Brute-force the registered class list as a fallback.
+func findTweakClass(_ name: String) -> AnyClass? {
+    if let cls = NSClassFromString(name) { return cls }
+    var count: UInt32 = 0
+    guard let classList = objc_copyClassList(&count) else { return nil }
+    defer { free(classList) }
+    for i in 0..<Int(count) where NSStringFromClass(classList[i]) == name {
+        return classList[i]
+    }
+    return nil
 }
 
 class AdsServiceImplKill: ClassHook<NSObject> {
@@ -178,18 +194,19 @@ class SponsoredCtxAttachmentProbe: ClassHook<NSObject> {
 // ImageBrandAd) is rendered by EmbeddedAdAdapterElementUI, and
 // EmbeddedCTAElementsServiceImpl provisions the embedded-CTA/ad adapter tree.
 // Same hide-on-attach pattern as SponsoredPlaylistHeaderViewKill above.
-class EmbeddedAdAdapterElementUIKill: ClassHook<UIView> {
+class EmbeddedAdAdapterElementUIKill: ClassHook<NSObject> {
     typealias Group = ScrollFeedAdViewGroup
     static let targetName =
         "_TtC35AdsEmbedded_EmbeddedCTAElementsImpl26EmbeddedAdAdapterElementUI"
 
     func didMoveToSuperview() {
         orig.didMoveToSuperview()
-        target.isHidden = true
-        target.isUserInteractionEnabled = false
-        if target.superview != nil {
+        guard let view = target as? UIView else { return }
+        view.isHidden = true
+        view.isUserInteractionEnabled = false
+        if view.superview != nil {
             adlog("EmbeddedAdAdapterElementUI (scroll-feed ad card)")
-            target.removeFromSuperview()
+            view.removeFromSuperview()
         }
     }
 }
@@ -323,9 +340,12 @@ func activateEeveeAdBlockerExtended() {
 
     var activated = 0
     for (className, label, activate) in loadTargets {
-        guard let cls = NSClassFromString(className),
-              class_getInstanceMethod(cls, loadSelector) != nil else {
-            ablog("\(label)/load unavailable; skipping")
+        guard let cls = findTweakClass(className) else {
+            ablog("\(label)/load unavailable: class not registered yet")
+            continue
+        }
+        guard class_getInstanceMethod(cls, loadSelector) != nil else {
+            ablog("\(label)/load unavailable: no load selector on \(NSStringFromClass(cls))")
             continue
         }
         activate()
@@ -333,7 +353,7 @@ func activateEeveeAdBlockerExtended() {
         ablog("\(label) hook activated")
     }
 
-    if let cls = NSClassFromString(SponsoredCtxAttachmentProbe.targetName),
+    if let cls = findTweakClass(SponsoredCtxAttachmentProbe.targetName),
        class_getInstanceMethod(cls, initSelector) != nil {
         SponsoredCtxAttachmentGroup().activate()
         activated += 1
@@ -343,7 +363,7 @@ func activateEeveeAdBlockerExtended() {
     }
 
     let viewSelector = Selector(("didMoveToSuperview"))
-    if let cls = NSClassFromString(SponsoredPlaylistHeaderViewKill.targetName) as? UIView.Type,
+    if let cls = findTweakClass(SponsoredPlaylistHeaderViewKill.targetName) as? UIView.Type,
        class_getInstanceMethod(cls, viewSelector) != nil {
         SponsoredPlaylistHeaderViewGroup().activate()
         activated += 1
@@ -354,7 +374,9 @@ func activateEeveeAdBlockerExtended() {
 
     // Scroll-feed ad card (9.1.8x scrollsita): view-level hide + service-level
     // starvation. Both runtime-gated so older builds degrade gracefully.
-    if let cls = NSClassFromString(EmbeddedAdAdapterElementUIKill.targetName) as? UIView.Type,
+    // Orion rejects this class as non-UIView (9.1.84), so the NSObject hook
+    // below attaches only if a view-compatible method actually exists.
+    if let cls = findTweakClass(EmbeddedAdAdapterElementUIKill.targetName),
        class_getInstanceMethod(cls, viewSelector) != nil {
         ScrollFeedAdViewGroup().activate()
         activated += 1
@@ -363,7 +385,7 @@ func activateEeveeAdBlockerExtended() {
         ablog("EmbeddedAdAdapterElementUI unavailable; skipping")
     }
 
-    if let cls = NSClassFromString(EmbeddedCTAElementsServiceImplKill.targetName),
+    if let cls = findTweakClass(EmbeddedCTAElementsServiceImplKill.targetName),
        class_getInstanceMethod(cls, loadSelector) != nil {
         ScrollFeedAdServiceGroup().activate()
         activated += 1
@@ -372,7 +394,7 @@ func activateEeveeAdBlockerExtended() {
         ablog("EmbeddedCTAElementsServiceImpl unavailable; skipping")
     }
 
-    if let cls = NSClassFromString(EmbeddedAdControllerServiceImplKill.targetName),
+    if let cls = findTweakClass(EmbeddedAdControllerServiceImplKill.targetName),
        class_getInstanceMethod(cls, loadSelector) != nil {
         ScrollFeedAdControllerGroup().activate()
         activated += 1
@@ -381,7 +403,7 @@ func activateEeveeAdBlockerExtended() {
         ablog("EmbeddedAdControllerServiceImpl unavailable; skipping")
     }
 
-    if let cls = NSClassFromString(HtmlAdElementUIKill.targetName),
+    if let cls = findTweakClass(HtmlAdElementUIKill.targetName),
        class_getInstanceMethod(cls, viewSelector) != nil {
         ScrollFeedAdViewGroup().activate()
         activated += 1
@@ -390,7 +412,7 @@ func activateEeveeAdBlockerExtended() {
         ablog("HtmlAdElementUI unavailable; skipping")
     }
 
-    if let cls = NSClassFromString(DSAMainViewKill.targetName),
+    if let cls = findTweakClass(DSAMainViewKill.targetName),
        class_getInstanceMethod(cls, viewSelector) != nil {
         ScrollFeedAdViewGroup().activate()
         activated += 1
